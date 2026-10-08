@@ -89,6 +89,66 @@
     pointer-events: none;
 }
 
+/* Settings → «Сворачивать рекламный блок»: the block shrinks to its Patreon line and the
+   timers panel takes the freed space, in the side column and in the bottom row alike. */
+.afru-adExpand {
+    display: none;
+}
+
+html[data-afru-ads="collapsed"] .staticRightColumn {
+    flex-direction: column;
+}
+
+html[data-afru-ads="collapsed"] .adCointainerWithSubscribe {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 10px;
+    padding: 5px 6px 5px 12px;
+}
+
+html[data-afru-ads="collapsed"] #mainAD {
+    display: none;
+}
+
+html[data-afru-ads="collapsed"] .adCointainerWithSubscribe .subscribeButton {
+    flex-grow: 1;
+    min-width: 0;
+    gap: 8px;
+}
+
+html[data-afru-ads="collapsed"] .subscribeButton .subscriberIcon,
+html[data-afru-ads="collapsed"] .subscribeButton .patreonBigIcon {
+    flex-shrink: 0;
+}
+
+/* AlecaFrame sizes every <button> as a 30px square icon. */
+html[data-afru-ads="collapsed"] .afru-adExpand {
+    display: block;
+    flex-shrink: 0;
+    width: auto;
+    height: auto;
+    white-space: nowrap;
+    padding: 3px 12px;
+    border: none;
+    border-radius: 12px;
+    font: inherit;
+    font-size: 14px;
+    color: var(--color-text);
+    background-color: var(--color-card);
+    cursor: pointer;
+    transition: background-color 0.15s linear;
+}
+
+.afru-adExpand:hover {
+    background-color: var(--color-card-hover);
+}
+
+.afru-adExpand:focus-visible {
+    outline: 2px solid var(--color-tab-lighter);
+    outline-offset: 2px;
+}
+
 /* Settings → AlecaFrame-RU */
 #afruSettingsTab .settingsCheckBoxHolder .settingsSelect {
     margin-left: 10px;

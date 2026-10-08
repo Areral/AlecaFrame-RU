@@ -5,8 +5,9 @@
  *    own market client (plugin.GetBuySellWindowData, the call behind the WTS/WTB panel).
  *  - Relic reward overlay: live prices for the detected rewards, and no "best"
  *    highlight while no reward has a known price.
+ *  - Main window: optional collapse of the ad block into its Patreon line (off by default).
  * Settings live in localStorage under "afru.*" and are shared by every AlecaFrame window.
- * Ads, the subscription status and AlecaFrame's own theme data are never touched.
+ * The subscription status and AlecaFrame's own theme data are never touched.
  */
 (function (root, css) {
   'use strict';
@@ -19,7 +20,7 @@
 
   var PREFIX = 'afru.';
   var PRICE_CACHE_KEY = PREFIX + 'prices';
-  var DEFAULTS = { theme: 'default', themeOverlays: true, relicLivePrices: true };
+  var DEFAULTS = { theme: 'default', themeOverlays: true, relicLivePrices: true, collapseAds: false };
   var THEMES = { graphite: 1 };
   var REFINEMENTS = { intact: 'I', exceptional: 'E', flawless: 'F', radiant: 'R' };
   var config = {
@@ -89,6 +90,82 @@
     var active = THEMES[theme] && (!isOverlay || getSetting('themeOverlays'));
     if (active) html.setAttribute('data-afru-theme', theme);
     else html.removeAttribute('data-afru-theme');
+  }
+
+  // --------------------------------------------------------------------- ads
+
+  function adsCollapsed() { return page === 'main' && getSetting('collapseAds'); }
+
+  // AlecaFrame keeps its only OwAd in the implicit global `currentAd`. While the block is
+  // collapsed the ad is removed, as AlecaFrame itself does under its modals, so nothing
+  // keeps loading where nobody can see it.
+  var ad = { instance: null, refresh: null, ready: false, removed: false };
+
+  function syncAdPlayback() {
+    var instance = ad.instance;
+    if (!instance || !ad.refresh || !ad.ready) return;
+    try {
+      if (adsCollapsed() && !ad.removed) { ad.removed = true; instance.removeAd(); }
+      else if (!adsCollapsed() && ad.removed) { ad.removed = false; ad.refresh.call(instance); }
+    } catch (e) { warn('cannot switch the ad block', e); }
+  }
+
+  function adoptAd(instance) {
+    ad.instance = instance;
+    ad.refresh = null;
+    ad.ready = false;
+    ad.removed = false;
+    if (!instance || typeof instance.refreshAd !== 'function' || typeof instance.removeAd !== 'function') return;
+    var refresh = ad.refresh = instance.refreshAd;
+    // AlecaFrame refreshes the ad after its modals close; keep it removed while collapsed.
+    instance.refreshAd = function () { if (!adsCollapsed()) return refresh.apply(instance, arguments); };
+    if (typeof instance.addEventListener === 'function') {
+      // OwAd accepts API calls only after this event.
+      instance.addEventListener('ow_internal_rendered', function () { ad.ready = true; syncAdPlayback(); });
+    } else {
+      ad.ready = true;
+    }
+  }
+
+  function watchAdInstance() {
+    var current = root.currentAd;
+    try {
+      Object.defineProperty(root, 'currentAd', {
+        configurable: true,
+        enumerable: true,
+        get: function () { return current; },
+        set: function (value) { current = value; adoptAd(value); },
+      });
+    } catch (e) { warn('cannot watch the ad block', e); return; }
+    if (current) adoptAd(current);
+  }
+
+  function applyAdLayout() {
+    var html = doc.documentElement;
+    if (html && page === 'main') {
+      if (adsCollapsed()) html.setAttribute('data-afru-ads', 'collapsed');
+      else html.removeAttribute('data-afru-ads');
+    }
+    syncAdPlayback();
+  }
+
+  function setAdsCollapsed(collapsed) {
+    setSetting('collapseAds', collapsed);
+    applyAdLayout();
+    syncSettingsUi();
+  }
+
+  function setupAdStrip() {
+    var block = doc.querySelector('.adCointainerWithSubscribe');
+    if (!block) return false;
+    if (block.querySelector('.afru-adExpand')) return true;
+    var expand = el('button', {
+      type: 'button', 'class': 'afru-adExpand', translate: 'no',
+      title: 'Развернуть рекламный блок. Свернуть снова: Настройки → AlecaFrame-RU.',
+    }, ['Показать']);
+    expand.addEventListener('click', function () { setAdsCollapsed(false); });
+    block.appendChild(expand);
+    return true;
   }
 
   // ------------------------------------------------------------------ prices
@@ -373,6 +450,8 @@
     if (overlays) overlays.checked = getSetting('themeOverlays');
     var live = doc.getElementById('afruRelicLive');
     if (live) live.checked = getSetting('relicLivePrices');
+    var ads = doc.getElementById('afruCollapseAds');
+    if (ads) ads.checked = getSetting('collapseAds');
   }
 
   function checkboxRow(id, text, extraClass) {
@@ -400,6 +479,14 @@
         ]),
       ]),
       el('div', { 'class': 'settingsGroup' }, [
+        el('span', { 'class': 'settingsTitle' }, ['Главное окно']),
+        checkboxRow('afruCollapseAds', 'Сворачивать рекламный блок'),
+        el('div', { 'class': 'settingsCheckBoxHolder indent small' }, [
+          'Блок сжимается в узкую полоску со ссылкой на Patreon, освободившееся место занимают таймеры. ' +
+          'Пока блок свёрнут, реклама не загружается. Развернуть: кнопка «Показать» на полоске.',
+        ]),
+      ]),
+      el('div', { 'class': 'settingsGroup' }, [
         el('span', { 'class': 'settingsTitle' }, ['Цены warframe.market']),
         checkboxRow('afruRelicLive', 'Уточнять цены наград в окне реликвии по текущим заказам'),
         el('div', { 'class': 'settingsCheckBoxHolder indent small' }, [
@@ -413,6 +500,7 @@
     themeSelect.addEventListener('change', function () { setSetting('theme', themeSelect.value); applyTheme(); });
     tab.querySelector('#afruThemeOverlays').addEventListener('change', function (e) { setSetting('themeOverlays', e.target.checked); });
     tab.querySelector('#afruRelicLive').addEventListener('change', function (e) { setSetting('relicLivePrices', e.target.checked); });
+    tab.querySelector('#afruCollapseAds').addEventListener('change', function (e) { setAdsCollapsed(e.target.checked); });
     clearButton.addEventListener('click', function () {
       clearPrices();
       lastRefresh = null;
@@ -514,12 +602,15 @@
     }, config.setupPollMs);
   }
 
+  function applyDocumentState() { applyTheme(); applyAdLayout(); }
+
+  if (page === 'main') watchAdInstance();
   // The installer puts the script right after <head>; when run even earlier there is no <html> yet.
-  if (injectStyle() && doc.documentElement) applyTheme();
-  else doc.addEventListener('DOMContentLoaded', function () { injectStyle(); applyTheme(); });
+  if (injectStyle() && doc.documentElement) applyDocumentState();
+  else doc.addEventListener('DOMContentLoaded', function () { injectStyle(); applyDocumentState(); });
   root.addEventListener('storage', function (e) {
     if (e.key === PRICE_CACHE_KEY) { priceCache = readPriceCache(); return; }
-    if (e.key == null || e.key.indexOf(PREFIX) === 0) { applyTheme(); syncSettingsUi(); }
+    if (e.key == null || e.key.indexOf(PREFIX) === 0) { applyDocumentState(); syncSettingsUi(); }
   });
 
   root.__AF_RU_EXTRAS__ = {
@@ -529,6 +620,7 @@
     getSetting: getSetting,
     setSetting: setSetting,
     applyTheme: applyTheme,
+    setAdsCollapsed: setAdsCollapsed,
     pickPrices: pickPrices,
     priceKey: priceKey,
     fetchPrice: fetchPrice,
@@ -536,6 +628,6 @@
     refreshInventoryPrices: refreshInventoryPrices,
   };
 
-  if (page === 'main') whenReady([setupInventory, setupSettingsTab]);
+  if (page === 'main') whenReady([setupInventory, setupSettingsTab, setupAdStrip]);
   else if (page === 'relicOverlay') whenReady([setupRelicOverlay]);
 })(typeof window !== 'undefined' ? window : null, /*__AF_RU_EXTRAS_CSS__*/ '');

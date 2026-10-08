@@ -84,6 +84,64 @@ test('theme: applied from settings, optional on overlays, never by default', () 
   unknown.win.close();
   });
 
+const AD_BLOCK = `
+  <div class="staticRightColumn">
+    <div class="adCointainerWithSubscribe adHideable">
+      <div id="mainAD" class="mainAD adHideable"><div id="mainADinner" class="adAttr400x300 adHideable"></div></div>
+      <div class="subscribeButton GoPremiumCallout adHideable"><div>Remove ads</div></div>
+    </div>
+  </div>`;
+
+// Same implicit-global assignment as AlecaFrame's startOWADcontainers().
+function fakeOwAd(win) {
+  win.eval(`currentAd = {
+    log: [],
+    on: {},
+    removeAd() { this.log.push('remove'); },
+    refreshAd() { this.log.push('refresh'); },
+    addEventListener(type, cb) { (this.on[type] = this.on[type] || []).push(cb); },
+  };`);
+  const ad = win.currentAd;
+  // The log array belongs to the JSDOM realm; deepStrictEqual compares prototypes.
+  return { calls: () => [...ad.log], emit: (type) => (ad.on[type] || []).forEach((cb) => cb()) };
+}
+
+test('ads: block untouched by default and on other windows', () => {
+  const plain = open('main.html', AD_BLOCK);
+  assert.equal(plain.doc.documentElement.hasAttribute('data-afru-ads'), false);
+  const { calls, emit } = fakeOwAd(plain.win);
+  emit('ow_internal_rendered');
+  plain.win.currentAd.refreshAd();
+  assert.deepEqual(calls(), ['refresh'], 'AlecaFrame keeps full control of the ad');
+  plain.win.close();
+
+  const overlay = open('relicOverlay.html', AD_BLOCK, { storage: { 'afru.collapseAds': 'true' } });
+  assert.equal(overlay.doc.documentElement.hasAttribute('data-afru-ads'), false);
+  overlay.win.close();
+});
+
+test('ads: collapsed block stops the ad until it is expanded again', async () => {
+  const { win, doc } = open('main.html', AD_BLOCK, { storage: { 'afru.collapseAds': 'true' } });
+  assert.equal(doc.documentElement.getAttribute('data-afru-ads'), 'collapsed');
+  const { calls, emit } = fakeOwAd(win);
+  assert.deepEqual(calls(), [], 'no OwAd calls before it is ready');
+  emit('ow_internal_rendered');
+  assert.deepEqual(calls(), ['remove']);
+  win.currentAd.refreshAd();
+  assert.deepEqual(calls(), ['remove'], 'refresh after a modal stays blocked while collapsed');
+
+  await waitFor(() => doc.querySelector('.afru-adExpand'), 'expand button');
+  doc.querySelector('.afru-adExpand').click();
+  assert.equal(doc.documentElement.hasAttribute('data-afru-ads'), false);
+  assert.equal(win.localStorage.getItem('afru.collapseAds'), 'false');
+  assert.deepEqual(calls(), ['remove', 'refresh']);
+
+  win.__AF_RU_EXTRAS__.setAdsCollapsed(true);
+  assert.equal(doc.documentElement.getAttribute('data-afru-ads'), 'collapsed');
+  assert.deepEqual(calls(), ['remove', 'refresh', 'remove']);
+  win.close();
+});
+
 test('theme: also applied when the script runs before <html> exists', () => {
   const { window: win } = new JSDOM('', { url: 'http://localhost/web/main.html', runScripts: 'outside-only' });
   const doc = win.document;
