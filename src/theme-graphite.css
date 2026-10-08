@@ -1,0 +1,55 @@
+/* AlecaFrame-RU: тема «Графит» — нейтральная тёмная, без синевы и фиолетового.
+   Active only while html[data-afru-theme="graphite"] is set (Settings → AlecaFrame-RU).
+   Variables are !important so the theme also wins over the colors that AlecaFrame's
+   own theme editor writes inline on :root. Ad slots are left as they are. */
+html[data-afru-theme="graphite"] {
+    --color-bg-1: #0e1012 !important;
+    --color-bg-2: #15181b !important;
+    --color-bg-3: #1c2024 !important;
+    --color-card: #1c2024 !important;
+    --color-card-hover: #252a2f !important;
+    --color-card-active: #2f353b !important;
+    --color-tab: #1d5751 !important;
+    --color-tab-hover: #246b64 !important;
+    --color-tab-active: #2c857b !important;
+    --color-tab-lighter: #8fd6cc !important;
+    --color-buy: #1d4636 !important;
+    --color-buy-hover: #255a46 !important;
+    --color-buy-active: #2f8f5b !important;
+    --color-sell: #4a292d !important;
+    --color-sell-hover: #633338 !important;
+    --color-sell-active: #a8393a !important;
+    --color-navigation: #8b9096 !important;
+    --color-navigation-hover: #c8ccd0 !important;
+    --color-navigation-active: #eef0f2 !important;
+    --color-background-controls: #e6e8ea !important;
+    --color-text: #e6e8ea !important;
+    --color-text-bg: #e6e8ea !important;
+    --color-icons: #d3d7db !important;
+    --color-icons-bg: #e6e8ea !important;
+}
+
+/* Colors that AlecaFrame's CSS hard-codes instead of using the variables. */
+html[data-afru-theme="graphite"] ::-webkit-scrollbar-track {
+    background: var(--color-card-active);
+}
+
+html[data-afru-theme="graphite"] .foundryObjectTopIcon.componentInSomething,
+html[data-afru-theme="graphite"] .foundryDetailsTopTopUsedInOthers,
+html[data-afru-theme="graphite"] .foundryDetailsCraftingTree {
+    background-color: var(--color-tab);
+}
+
+html[data-afru-theme="graphite"] .isMod > .inventoryItemImage,
+html[data-afru-theme="graphite"] .relicPlanner > .relicDetailsBLTopExpected {
+    background-color: var(--color-bg-2);
+}
+
+/* Relic reward overlay: a clear outline for the most valuable reward. */
+html[data-afru-theme="graphite"] .relicMaxPrice {
+    box-shadow: inset 0 0 0 2px var(--color-tab-lighter);
+}
+
+html[data-afru-theme="graphite"] .relicItemLocked {
+    background-color: #e6e8ea1f;
+}
