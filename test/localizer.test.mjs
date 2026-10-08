@@ -58,17 +58,45 @@ test('patterns fill placeholders, allow reordering and translate known values', 
   assert.equal($(dom, '#c').textContent, 'Продано за 120p: Ash Prime Set');
 });
 
-test('leaves item names read by the app, code, user input and ad slots alone', () => {
+test('leaves code, user input and ad slots alone', () => {
   const dom = setup(`
-    <div class="inventoryObject"><div class="inventoryItemName" id="item">Forma</div></div>
     <script>/* Foundry */</script>
     <textarea id="ta">Sell</textarea>
     <div id="mainADinner"><span id="ad">Sell</span></div>
     <div translate="no"><span id="no">Sell</span></div>`);
-  assert.equal($(dom, '#item').textContent, 'Forma');
   assert.equal($(dom, '#ta').value, 'Sell');
   assert.equal($(dom, '#ad').textContent, 'Sell');
   assert.equal($(dom, '#no').textContent, 'Sell');
+});
+
+test('inventory card names are shown in Russian, but AlecaFrame reads them back in English', async () => {
+  const seen = [];
+  const dom = setup(`
+    <div class="inventoryObject" id="card">
+      <div class="inventoryItemName" rank="0"><span class="normalItem" id="name">Forma</span></div>
+      <button id="sell">Sell</button>
+    </div>`, {
+    beforeInject(win) {
+      // Same lookup as AlecaFrame's onBuySellItemClicked (jsdom has no innerText).
+      win.onBuySellItemClicked = function (event) {
+        let target = event.target;
+        while (!target.classList.contains('inventoryObject')) target = target.parentElement;
+        seen.push(target.getElementsByClassName('inventoryItemName')[0].textContent);
+        return 'handled';
+      };
+    },
+  });
+  const win = dom.window;
+  // AlecaFrame's handlers are wrapped on DOMContentLoaded, after its own scripts have run.
+  await new Promise((r) => (win.document.readyState === 'loading' ? win.document.addEventListener('DOMContentLoaded', r) : r()));
+  assert.equal($(dom, '#name').textContent, 'Форма');
+  const result = win.onBuySellItemClicked({ target: $(dom, '#sell'), preventDefault() {} });
+  assert.equal(result, 'handled');
+  assert.deepEqual(seen, ['Forma'], 'warframe.market lookup uses the English name');
+  assert.equal($(dom, '#name').textContent, 'Форма', 'the card shows Russian again right away');
+  const writes = win.__AF_RU__.stats.text;
+  await flush();
+  assert.equal(win.__AF_RU__.stats.text, writes, 'the swap does not look like new text');
 });
 
 test('translates text attributes, including HTML tooltips', () => {

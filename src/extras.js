@@ -299,15 +299,61 @@
     return item && item.name ? freshPrice(priceKey(item.name, itemVariant(item))) : null;
   }
 
-  function applyCachedPrices() {
+  /** Puts cached prices on the listed items; with resort, restores the price order if a price changed. */
+  function applyCachedPrices(resort) {
     var items = inventoryItems();
+    var changed = false;
     for (var i = 0; i < items.length; i++) {
       var entry = cachedEntryFor(items[i]);
       if (!entry) continue;
-      if (entry.s != null && items[i].sellPrice !== entry.s) items[i].sellPrice = entry.s;
-      if (entry.b != null && items[i].buyPrice !== entry.b) items[i].buyPrice = entry.b;
+      if (entry.s != null && items[i].sellPrice !== entry.s) { items[i].sellPrice = entry.s; changed = true; }
+      if (entry.b != null && items[i].buyPrice !== entry.b) { items[i].buyPrice = entry.b; changed = true; }
     }
+    if (changed && resort) sortByPrice();
     markFreshCards();
+  }
+
+  // AlecaFrame sorts the list in its plugin, by the prices it had when the list was loaded.
+  function sortValue(item, order) {
+    var price = Number(item.sellPrice);
+    if (!(price > 0)) return null;
+    if (order === 'platPrice') return price;
+    var ducats = Number(item.ducats);
+    return ducats > 0 ? ducats / price : null; // ducanator: ducats per platinum, as on the cards
+  }
+
+  /**
+   * Re-sorts the list by the current sell prices when it is ordered by platinum (or ducats per
+   * platinum), in AlecaFrame's current direction (largest first by default). Items without a price
+   * go last; equal prices keep their order.
+   */
+  function sortByPrice() {
+    var select = doc.getElementById('inventoryOrdering');
+    var order = select ? select.value : '';
+    if (order !== 'platPrice' && order !== 'ducanator') return false;
+    var items = inventoryItems();
+    if (items.length < 2 || typeof items.splice !== 'function') return false;
+    var descending = root.orderedLargerToSmaller !== false;
+    var ranked = Array.prototype.map.call(items, function (item, index) {
+      return { item: item, index: index, value: item ? sortValue(item, order) : null };
+    });
+    ranked.sort(function (a, b) {
+      if (a.value == null || b.value == null) {
+        if (a.value == null && b.value == null) return a.index - b.index;
+        return a.value == null ? 1 : -1;
+      }
+      if (a.value !== b.value) return descending ? b.value - a.value : a.value - b.value;
+      return a.index - b.index;
+    });
+    if (ranked.every(function (r, i) { return r.index === i; })) return false;
+    // In place: AlecaFrame's `items` watcher (and ours) only fire when the list is replaced.
+    items.splice.apply(items, [0, items.length].concat(ranked.map(function (r) { return r.item; })));
+    return true;
+  }
+
+  function displayedName(name) {
+    var ru = root.__AF_RU__ && root.__AF_RU__.translate(name);
+    return ru || name;
   }
 
   // Cards follow the items order (v-for); the name check guards against a render in progress.
@@ -319,7 +365,9 @@
       for (var i = 0; i < cards.length; i++) {
         var label = cards[i].querySelector('.inventoryItemName');
         var item = items[i];
-        var matches = item && label && label.textContent.trim() === String(item.name).trim();
+        var shown = label ? label.textContent.trim() : '';
+        var name = item ? String(item.name).trim() : '';
+        var matches = item && label && (shown === name || shown === displayedName(name).trim());
         if (matches && cachedEntryFor(item)) cards[i].setAttribute('data-afru-fresh', '');
         else cards[i].removeAttribute('data-afru-fresh');
       }
@@ -393,6 +441,8 @@
       (function next(index) {
         if (run.stopped || index >= jobs.length) {
           refreshRun = null;
+          // Cards stay in place while prices arrive and are re-sorted once at the end.
+          if (run.updated && sortByPrice()) markFreshCards();
           lastRefresh = {
             at: now(), updated: run.updated, total: run.total, failed: run.failed,
             stopped: run.stopped && !run.unavailable, error: run.unavailable && !run.updated ? 'unavailable' : null,
@@ -403,7 +453,7 @@
         }
         fetchPrice(jobs[index].name, jobs[index].variant).then(function (res) {
           run.done++;
-          if (res.entry) { run.updated++; applyCachedPrices(); }
+          if (res.entry) { run.updated++; applyCachedPrices(false); }
           else if (res.error === 'unavailable') { run.unavailable = true; run.stopped = true; }
           else run.failed++;
           renderChip();
@@ -435,8 +485,9 @@
     var bar = doc.querySelector('#tabInventory .foundryTopSettingsSide.right');
     if (!app || typeof app.$watch !== 'function' || !bar) return false;
     if (!doc.getElementById('afruPriceRefresh')) bar.insertBefore(buildChip(), bar.firstChild);
-    app.$watch('items', applyCachedPrices);
-    applyCachedPrices();
+    // A list loaded by AlecaFrame is sorted by its own prices: apply ours and sort again.
+    app.$watch('items', function () { applyCachedPrices(true); });
+    applyCachedPrices(true);
     renderChip();
     return true;
   }

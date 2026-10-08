@@ -8,6 +8,7 @@
   "scripts": {
     "extract": "node tools/extract.mjs",
     "coverage": "node tools/coverage.mjs",
+    "items": "node tools/items.mjs",
     "build": "node tools/build.mjs",
     "test": "node --test test/*.test.mjs",
     "preview": "node tools/preview.mjs",

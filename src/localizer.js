@@ -1,7 +1,7 @@
 /*
  * AlecaFrame-RU: runtime localizer for AlecaFrame windows.
- * Only rewrites visible text (text nodes and a few text attributes).
- * Does not touch application logic, ads or subscription code.
+ * Only rewrites visible text (text nodes and a few text attributes); where AlecaFrame
+ * reads a text back, it gets the original. Does not touch application logic, ads or subscription code.
  */
 (function (root, dict, css) {
   'use strict';
@@ -10,9 +10,8 @@
   var doc = root.document;
   var TEXT_ATTRS = ['title', 'placeholder', 'aria-label', 'data-tippy-content'];
   var SKIP_TAGS = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEXTAREA: 1, CODE: 1, PRE: 1 };
-  // .inventoryItemName: its innerText is read back as the warframe.market item name.
   // Ad slots: left exactly as delivered.
-  var SKIP_SELECTOR = '[translate="no"], .notranslate, [contenteditable="true"], .inventoryItemName, #mainADinner, [class*="adAttr"], iframe';
+  var SKIP_SELECTOR = '[translate="no"], .notranslate, [contenteditable="true"], #mainADinner, [class*="adAttr"], iframe';
   var LETTERS = /[A-Za-z]/;
   var CYRILLIC = /[А-Яа-яЁё]/;
 
@@ -78,8 +77,10 @@
     return out === s ? null : out;
   }
 
-  // Remember what we wrote so our own mutations are not processed again.
+  // Remember what we wrote so our own mutations are not processed again,
+  // and the original text for code that reads it back.
   var writtenText = new WeakMap();
+  var sourceText = new WeakMap();
   var writtenAttr = new WeakMap();
   var stats = { text: 0, attrs: 0, missed: new Map() };
   var MAX_MISSES = 3000;
@@ -113,8 +114,50 @@
       parent.setAttribute('value', parent.text);
     }
     writtenText.set(node, out);
+    sourceText.set(node, value);
     node.nodeValue = out;
     stats.text++;
+  }
+
+  /** Runs fn while the translated text nodes inside scope show their original text again. */
+  function withSourceText(scope, fn, self, args) {
+    var swapped = [];
+    if (scope) {
+      var walker = doc.createTreeWalker(scope, 4); // SHOW_TEXT
+      for (var n = walker.nextNode(); n; n = walker.nextNode()) {
+        var source = sourceText.get(n);
+        if (source !== undefined && writtenText.get(n) === n.nodeValue) {
+          swapped.push(n);
+          n.nodeValue = source;
+        }
+      }
+    }
+    try {
+      return fn.apply(self, args);
+    } finally {
+      // Back to exactly what we wrote, so the observer does not treat it as new text.
+      swapped.forEach(function (node) { node.nodeValue = writtenText.get(node); });
+    }
+  }
+
+  // AlecaFrame reads an inventory card's name back (innerText) and looks it up on warframe.market
+  // by that English name, so its click handler sees the card's original text.
+  function cardName(event) {
+    var target = event && event.target;
+    if (target && target.nodeType !== 1) target = target.parentNode;
+    var card = target && target.closest ? target.closest('.inventoryObject') : null;
+    return card && card.querySelector('.inventoryItemName');
+  }
+  var READ_BACK = { onBuySellItemClicked: cardName };
+
+  function wrapReadBack() {
+    Object.keys(READ_BACK).forEach(function (name) {
+      var original = root[name];
+      if (typeof original !== 'function' || original.__afruReadBack) return;
+      var wrapped = function (event) { return withSourceText(READ_BACK[name](event), original, this, arguments); };
+      wrapped.__afruReadBack = true;
+      root[name] = wrapped;
+    });
   }
 
   function translateAttr(el, name) {
@@ -218,6 +261,9 @@
     var target = doc.documentElement || doc;
     // Injected before parsing: <html>/<head> do not exist yet.
     if (!decorateDocument()) doc.addEventListener('DOMContentLoaded', decorateDocument);
+    // AlecaFrame's own scripts (and their global handlers) load after this one.
+    if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', wrapReadBack);
+    else wrapReadBack();
     translateTree(target);
     // Written to Overwolf's per-window log; the launcher waits for this line.
     try { root.console.log('[AlecaFrame-RU] loaded v' + (dict.version || 'dev')); } catch (e) { /* no console */ }
@@ -235,6 +281,7 @@
     version: dict.version || 'dev',
     translate: translate,
     translateTree: translateTree,
+    withSourceText: withSourceText,
     stats: stats,
     /** Untranslated texts seen in this window, for reporting gaps in the dictionary. */
     missing: function () { return Array.from(stats.missed.keys()).sort(); },

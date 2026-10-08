@@ -216,6 +216,62 @@ test('inventory: «Обновить цены» loads warframe.market prices, mar
   win.close();
 });
 
+const ORDERING = (value) => `<select id="inventoryOrdering"><option value="name">Name</option><option value="platPrice">Platinum</option></select>`
+  .replace(`value="${value}"`, `value="${value}" selected`);
+const SORT_ITEMS = [
+  { name: 'Alternox Prime Stock', type: 'part', sellPrice: 14 },
+  { name: 'Nova Prime Systems Blueprint', type: 'part', sellPrice: 10 },
+  { name: 'Vasto Prime Barrel', type: 'part', sellPrice: 9 },
+  { name: 'Forma Blueprint', type: 'part', sellPrice: 0 },
+  { name: 'Corufell Prime Stock', type: 'part', sellPrice: 5 },
+];
+const SORT_MARKET = {
+  'Alternox Prime Stock': { sellListings: [{ platimun: 9 }] },
+  'Nova Prime Systems Blueprint': { sellListings: [{ platimun: 13 }] },
+  'Corufell Prime Stock': { sellListings: [{ platimun: 11 }] },
+};
+const names = (win) => [...win.inventoryApp.items].map((i) => i.name);
+
+test('inventory: sorted by platinum, the list follows the refreshed sell prices', async () => {
+  const { win, doc } = open('main.html', ORDERING('platPrice') + INVENTORY, { market: SORT_MARKET });
+  win.eval(`var orderedLargerToSmaller = true; inventoryApp = Vue.createApp({ data: () => ({ items: ${JSON.stringify(SORT_ITEMS)} }) }).mount('#tabInventory')`);
+  await waitFor(() => doc.getElementById('afruPriceRefresh'), 'refresh button');
+  await win.__AF_RU_EXTRAS__.refreshInventoryPrices();
+  assert.deepEqual(names(win), [
+    'Nova Prime Systems Blueprint', // 13
+    'Corufell Prime Stock', // 11
+    'Alternox Prime Stock', // 9, listed before Vasto by AlecaFrame
+    'Vasto Prime Barrel', // 9
+    'Forma Blueprint', // no price: last
+  ]);
+  await waitFor(() => doc.querySelectorAll('[data-afru-fresh]').length === 3, 'fresh markers after sorting');
+  const cards = [...doc.querySelectorAll('.inventoryObject')];
+  assert.deepEqual(cards.map((c) => c.querySelector('.inventorySellPrice').textContent), ['13', '11', '9', '9', '0']);
+  assert.deepEqual(cards.map((c) => c.hasAttribute('data-afru-fresh')), [true, true, true, false, false]);
+
+  // AlecaFrame reloads the list sorted by its old prices; the cached ones put it back in order.
+  win.inventoryApp.items = JSON.parse(JSON.stringify(SORT_ITEMS));
+  await waitFor(() => names(win)[0] === 'Nova Prime Systems Blueprint', 'order restored on reload');
+  assert.equal(names(win)[1], 'Corufell Prime Stock');
+
+  // Smallest first when AlecaFrame's direction toggle is reversed; unpriced items still go last.
+  win.orderedLargerToSmaller = false;
+  win.inventoryApp.items = JSON.parse(JSON.stringify(SORT_ITEMS));
+  await waitFor(() => names(win)[0] === 'Alternox Prime Stock', 'ascending order');
+  assert.deepEqual(names(win).slice(-2), ['Nova Prime Systems Blueprint', 'Forma Blueprint']);
+  win.close();
+});
+
+test('inventory: other orderings are left as AlecaFrame sorted them', async () => {
+  const { win, doc } = open('main.html', ORDERING('name') + INVENTORY, { market: SORT_MARKET });
+  win.eval(`inventoryApp = Vue.createApp({ data: () => ({ items: ${JSON.stringify(SORT_ITEMS)} }) }).mount('#tabInventory')`);
+  await waitFor(() => doc.getElementById('afruPriceRefresh'), 'refresh button');
+  await win.__AF_RU_EXTRAS__.refreshInventoryPrices();
+  assert.deepEqual(names(win), SORT_ITEMS.map((i) => i.name));
+  assert.equal(win.inventoryApp.items[1].sellPrice, 13);
+  win.close();
+});
+
 test('inventory: reports a missing market client instead of failing silently', async () => {
   const { win, doc } = open('main.html', INVENTORY);
   win.eval(`inventoryApp = Vue.createApp({ data: () => ({ items: ${JSON.stringify(ITEMS.slice(0, 2))} }) }).mount('#tabInventory')`);

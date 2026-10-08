@@ -10,7 +10,9 @@ if (dict.errors.length) {
 }
 const strings = readStrings();
 if (strings) {
-  const stale = [...Object.keys(dict.exact), ...Object.keys(dict.patterns)].filter((k) => !(k in strings.strings));
+  // Item names come from game data at runtime, not from AlecaFrame's markup.
+  const stale = [...Object.keys(dict.exact), ...Object.keys(dict.patterns)]
+    .filter((k) => !(k in strings.strings) && dict.origin[k] !== '90-items.json');
   if (stale.length) console.warn(`${stale.length} translations are not in strings/en.json (kept; may come from runtime data):\n  ${stale.slice(0, 20).join('\n  ')}`);
 }
 const dist = path.join(ROOT, 'dist');
