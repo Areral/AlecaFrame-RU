@@ -201,10 +201,21 @@ Check 'статус читается обратно (кириллица, таб�
     $status.Message -eq "Перевод подключён`tк 2.6.90" -and ($now - $status.Time).TotalMinutes -lt 5)
 Check 'нет файла статуса -> $null' ($null -eq (Read-AfruStatus -Path (Join-Path $state 'nope')))
 
+# --- окно установки, в котором агент задаёт вопрос о report-only
+$watch = Join-Path $state 'install.watch'
+Check 'окна установки нет -> вопрос отдельным окном' (-not (Test-AfruWatcher -Path $watch))
+Set-Content -LiteralPath $watch -Value $PID
+Check 'окно установки открыто (PID живого PowerShell) -> вопрос в нём' (Test-AfruWatcher -Path $watch)
+Set-Content -LiteralPath $watch -Value 2147483000
+Check 'окно установки закрыто (процесса нет) -> отдельным окном' (-not (Test-AfruWatcher -Path $watch))
+Set-Content -LiteralPath $watch -Value 'мусор'
+Check 'испорченный файл окна установки не считается' (-not (Test-AfruWatcher -Path $watch))
+
 # --- пути и запуск агента без окна
 $p = Get-AfruPaths -LocalAppData $tmp
 Check 'пути считаются от LOCALAPPDATA' ($p.Extensions -eq (Join-Path $tmp "Overwolf\Extensions\$appId") -and
-    $p.Localizer.StartsWith($p.App) -and $p.Agent.EndsWith('Agent.ps1'))
+    $p.Localizer.StartsWith($p.App) -and $p.Agent.EndsWith('Agent.ps1') -and
+    $p.Watcher.StartsWith($p.State) -and $p.ReportOnlyNo.StartsWith($p.State) -and $p.ReportOnly -ne $p.ReportOnlyNo)
 $conhost = Join-Path $tmp 'conhost.exe'; Set-Content -LiteralPath $conhost -Value ''
 $cmd = Get-AfruAgentCommand -AgentPath 'C:\A\Agent.ps1' -Launch -PowerShell 'C:\PS\powershell.exe' -Conhost $conhost -Build 22631
 Check 'Windows 10 1809+ -> conhost --headless, без окна терминала' ($cmd.Target -eq $conhost -and

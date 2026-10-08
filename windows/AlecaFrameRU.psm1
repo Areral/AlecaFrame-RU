@@ -58,6 +58,8 @@ function Get-AfruPaths {
         Status        = Join-Path $state 'status'
         Consent       = Join-Path $state 'consent-v2'
         ReportOnly    = Join-Path $state 'report-only-v1'
+        ReportOnlyNo  = Join-Path $state 'report-only.declined'
+        Watcher       = Join-Path $state 'install.watch'
         Blocked       = Join-Path $state 'blocked-v1'
         LaunchRequest = Join-Path $state 'launch.request'
         Extensions    = Join-Path $LocalAppData "Overwolf\Extensions\$script:AppId"
@@ -132,7 +134,7 @@ function Add-AfruLocalizer {
         $plan += [pscustomobject]@{ Page = $page; File = $file; Text = $text.Insert($m.Index + $m.Length, $script:Tag) }
     }
 
-    # Скрипты кладутся раньше тегов: страница не должна ссылаться на файл, которого ещё нет.
+    # Скрипты кладутся раньше тегов: страница не должна ссылаться на файл, которого ещё н��т.
     $jsDir = Join-Path (Join-Path $web 'assets') 'js'
     $sourceDir = Split-Path -Parent $LocalizerSource
     Copy-AfruIfChanged $LocalizerSource (Join-Path $jsDir $script:JsName)
@@ -260,6 +262,17 @@ function Read-AfruStatus {
     $null = [datetime]::TryParse($parts[0], [Globalization.CultureInfo]::InvariantCulture,
         [Globalization.DateTimeStyles]::RoundtripKind, [ref]$time)
     [pscustomobject]@{ Time = $time; Code = $parts[1]; Message = $(if ($parts.Count -gt 2) { $parts[2] } else { '' }) }
+}
+
+# Install.cmd записывает свой PID, пока показывает ход установки: агент задаёт вопросы в его окне.
+function Test-AfruWatcher {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    $id = 0
+    $text = "$(Get-Content -LiteralPath $Path -TotalCount 1 -ErrorAction SilentlyContinue)".Trim()
+    if (-not [int]::TryParse($text, [ref]$id) -or $id -le 0) { return $false }
+    $process = Get-Process -Id $id -ErrorAction SilentlyContinue
+    [bool]($process -and $process.ProcessName -match '^(powershell|pwsh)$')
 }
 
 <#
@@ -589,7 +602,7 @@ function Unregister-AfruIntegration {
 
 Export-ModuleMember -Function Get-AfruAppId, Get-AfruFlags, Get-AfruPaths, Get-AfruVersionDirectories, Get-AfruVersionDirectory,
     Add-AfruLocalizer, Remove-AfruLocalizer, Test-AfruPatched, Restore-AfruAll, Install-AfruAppFiles,
-    Write-AfruStatus, Read-AfruStatus, Get-AfruAgentDecision, Get-AfruIntegrityFailure, Test-AfruLogLine,
+    Write-AfruStatus, Read-AfruStatus, Test-AfruWatcher, Get-AfruAgentDecision, Get-AfruIntegrityFailure, Test-AfruLogLine,
     Get-AfruFlagState, Get-AfruOverwolfAge, Get-AfruTraceExcerpt, Find-AfruOverwolf, Stop-AfruOverwolf,
     Get-AfruOverwolfProcess, Wait-AfruOverwolf, Get-AfruRenderer, Test-AfruAppWanted, Start-AfruApp, Stop-AfruRenderer,
     Get-AfruPowerShell, Get-AfruAgentArguments, Get-AfruAgentCommand, Get-AfruAgentProcess, Stop-AfruAgent, Start-AfruAgent,

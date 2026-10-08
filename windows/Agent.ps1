@@ -134,19 +134,42 @@ function Write-IntegrityDiagnostics([object]$Failure) {
     foreach ($line in (Get-AfruTraceExcerpt -Trace $Failure.Trace)) { Write-Log "  trace: $line" }
 }
 
+<#
+  Можно ли добавить флаг report-only. Если открыто окно Install.cmd, вопрос задаётся там, как в Start.cmd:
+  у агента нет окна, а отдельное сообщение легко пропустить или закрыть клавишей Enter (кнопка по умолчанию «Нет»).
+#>
+function Request-ReportOnly {
+    if (Test-Path -LiteralPath $paths.ReportOnly) { return $true }
+    if (Test-AfruWatcher -Path $paths.Watcher) {
+        Remove-Item -LiteralPath $paths.ReportOnlyNo -Force -ErrorAction SilentlyContinue
+        Set-Status 'question' 'Нужно ваше решение в окне установки'
+        while ($true) {
+            if (Test-Path -LiteralPath $paths.ReportOnly) { return $true }
+            if (Test-Path -LiteralPath $paths.ReportOnlyNo) {
+                Remove-Item -LiteralPath $paths.ReportOnlyNo -Force -ErrorAction SilentlyContinue
+                return $false
+            }
+            if (-not (Test-AfruWatcher -Path $paths.Watcher)) { break }
+            Start-Sleep -Milliseconds 500
+        }
+        Write-Log 'Окно установки закрыли, не ответив: спрашиваю отдельным окном.'
+    }
+    $allowed = Show-Message -Question (
+        "Ваша сборка Overwolf проверяет файлы даже с флагом extension-validation и закрыла изменённый AlecaFrame. " +
+        "Файлы AlecaFrame уже возвращены в исходный вид.`n`n" +
+        "Можно запускать Overwolf ещё и с флагом force-validation-report-only: Overwolf по-прежнему сверяет файлы, " +
+        "но о несовпадениях только пишет в журнал и не закрывает приложение. Это касается ВСЕХ приложений Overwolf, " +
+        "пока AlecaFrame-RU установлен.`n`nПерезапустить Overwolf с этим флагом? Ответ запомнится.")
+    if ($allowed) { Set-Content -LiteralPath $paths.ReportOnly -Value (Get-Date -Format o) }
+    $allowed
+}
+
 # Overwolf закрыл изменённый AlecaFrame даже с флагом: файлы назад, дальше решает пользователь.
 function Resolve-IntegrityFailure([object]$Failure, [object]$VersionDir, [object]$Install) {
     Write-IntegrityDiagnostics $Failure
     Restore-Files 'HashMismatch'
     if (-not $script:reportOnly) {
-        $allowed = (Test-Path -LiteralPath $paths.ReportOnly) -or (Show-Message -Question (
-            "Ваша сборка Overwolf проверяет файлы даже с флагом extension-validation и закрыла изменённый AlecaFrame. " +
-            "Файлы AlecaFrame уже возвращены в исходный вид.`n`n" +
-            "Можно запускать Overwolf ещё и с флагом force-validation-report-only: Overwolf по-прежнему сверяет файлы, " +
-            "но о несовпадениях только пишет в журнал и не закрывает приложение. Это касается ВСЕХ приложений Overwolf, " +
-            "пока AlecaFrame-RU установлен.`n`nПерезапустить Overwolf с этим флагом? Ответ запомнится."))
-        if ($allowed) {
-            Set-Content -LiteralPath $paths.ReportOnly -Value (Get-Date -Format o)
+        if (Request-ReportOnly) {
             Write-Log 'Пользователь разрешил force-validation-report-only.'
             $script:reportOnly = $true
             $script:flags = Get-AfruFlags $true
@@ -156,9 +179,10 @@ function Resolve-IntegrityFailure([object]$Failure, [object]$VersionDir, [object
             }
             return
         }
+        Write-Log 'Пользователь отказался от force-validation-report-only.'
         Set-Content -LiteralPath $paths.Blocked -Value 'declined'
-        Set-Status 'blocked' ('Без флага force-validation-report-only эта сборка Overwolf не даёт подключить перевод. ' +
-            'AlecaFrame работает на английском. Чтобы попробовать снова, запустите Install.cmd.')
+        Set-Status 'blocked' ('Ответ «нет» на вопрос о флаге force-validation-report-only: без него эта сборка Overwolf ' +
+            'закрывает изменённый AlecaFrame, поэтому он работает на английском. Передумаете — запустите Install.cmd ещё раз.')
     }
     else {
         Set-Content -LiteralPath $paths.Blocked -Value 'unsupported'
