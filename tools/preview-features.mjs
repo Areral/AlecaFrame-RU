@@ -132,12 +132,16 @@ async function mainWindow(theme) {
 
   // «Продам» on the first card: AlecaFrame reads the card's name back and must get the English one.
   await page.evaluate(() => { window.__AFRU_LOOKUPS__.length = 0; });
-  await page.locator('#inventoryObjectContainer > .inventoryObject').first().locator('.inventoryItemButtonPostSell').click({ force: true });
-  // page.waitForFunction stalls once the WTS panel opens; plain polling does not.
+  // The cards are re-rendered right after a refresh, so a click can land on a replaced card;
+  // click again until AlecaFrame asks for the listing. page.waitForFunction stalls once the WTS
+  // panel opens; plain polling does not.
   let lookup;
-  for (let tries = 0; !lookup && tries < 50; tries++) {
-    await page.waitForTimeout(100);
-    lookup = await page.evaluate(() => window.__AFRU_LOOKUPS__[0]);
+  for (let clicks = 0; !lookup && clicks < 3; clicks++) {
+    await page.locator('#inventoryObjectContainer > .inventoryObject').first().locator('.inventoryItemButtonPostSell').click({ force: true });
+    for (let tries = 0; !lookup && tries < 15; tries++) {
+      await page.waitForTimeout(100);
+      lookup = await page.evaluate(() => window.__AFRU_LOOKUPS__[0]);
+    }
   }
   await page.waitForTimeout(400);
   await shot(page, `${theme}-inventory-wts`);
@@ -148,6 +152,14 @@ async function mainWindow(theme) {
   await page.click('[tabid="afruSettingsTab"]');
   await page.waitForTimeout(200);
   await shot(page, `${theme}-settings`);
+  // Side menu tabs: hide two of them and look at the menu.
+  await page.locator('.afru-tabList').scrollIntoViewIfNeeded();
+  for (const id of ['proAnalyticsTab', 'tabStats']) await page.locator(`#afruTab-${id}`).uncheck({ force: true });
+  await page.waitForTimeout(200);
+  await shot(page, `${theme}-settings-tabs`);
+  const visibleTabs = await page.evaluate(() => [...document.querySelectorAll('.topMenuGroup > .menuItem')]
+    .filter((m) => getComputedStyle(m).display !== 'none').map((m) => m.getAttribute('tabid')));
+  for (const id of ['proAnalyticsTab', 'tabStats']) await page.locator(`#afruTab-${id}`).check({ force: true });
   await page.click('[tabid="generalSettingsTab"]');
   await page.waitForTimeout(200);
   await shot(page, `${theme}-settings-general`);
@@ -158,6 +170,7 @@ async function mainWindow(theme) {
 
   report.push(`## main.html, theme=${theme} (page errors: ${errors.length})`, `  chip: ${chip}`, ...prices.map((p) => `  ${p}`));
   report.push(`  «Продам» on «${firstCard}» looked up: ${lookup}`);
+  report.push(`  side menu with Analytics and Stats unchecked: ${visibleTabs.join(', ')}`);
   report.push(...errors.map((e) => `  page error: ${e.split('\n')[0]}`));
   await ctx.close();
 }

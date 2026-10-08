@@ -140,6 +140,102 @@ Check 'в выдержку попадают флаги и HashMismatch, пост
 $tail = @(Get-AfruTraceExcerpt -Trace $trace -Max 10)
 Check 'выдержка ограничена последними строками' ($tail.Count -eq 10 -and $tail[-1] -eq 'INFO content validation 50')
 
+# --- все версии AlecaFrame: после обновления их бывает две
+$all = @(Get-AfruVersionDirectories -ExtensionsRoot $ext)
+Check 'список версий по убыванию, без папок без manifest.json' (($all | ForEach-Object Name) -join ',' -eq '2.6.11,2.6.10,2.6.9')
+Check 'нет папки AlecaFrame -> пустой список' (@(Get-AfruVersionDirectories -ExtensionsRoot (Join-Path $tmp 'nope')).Count -eq 0)
+$web1 = Join-Path $v.FullName 'web'
+Write-Bytes (Join-Path $web1 'main.html') $shapes['main.html']
+Remove-Item -LiteralPath (Join-Path $web3 'AFBuilds.html') -Force
+$backups = Join-Path $state 'backup-all'
+foreach ($dir in $v, $v2, $v3) {
+    $null = Add-AfruLocalizer -VersionPath $dir.FullName -ExtensionsRoot $ext -LocalizerSource $src -BackupRoot (Join-Path $backups $dir.Name)
+}
+Check 'Test-AfruPatched видит подключённый перевод' (Test-AfruPatched -VersionPath $v.FullName)
+$restoredCount = Restore-AfruAll -ExtensionsRoot $ext -BackupRoot $backups
+Check 'Restore-AfruAll возвращает страницы во всех версиях' ($restoredCount -eq 5 -and
+    -not (Test-AfruPatched -VersionPath $v.FullName) -and -not (Test-AfruPatched -VersionPath $v2.FullName) -and
+    -not (Test-AfruPatched -VersionPath $v3.FullName))
+$identical = $true
+foreach ($name in $shapes.Keys) { if ((Sha (Join-Path $web $name)) -ne $before[$name]) { $identical = $false } }
+Check 'после Restore-AfruAll файлы побайтово исходные' ($identical -and (Sha (Join-Path $web3 'main.html')) -eq $mainBefore)
+
+# --- решения агента
+function Decide([hashtable]$Arguments) { Get-AfruAgentDecision @Arguments }
+function Is([object]$D, [string]$Expected) {
+    $on = @('Restore', 'StartOverwolf', 'RestartOverwolf', 'Patch', 'LaunchApp' | Where-Object { $D.$_ })
+    ($on -join ',') -eq $Expected
+}
+Check 'Overwolf с флагами, перевода нет -> подключить' (Is (Decide @{ FlagState = 'ok' }) 'Patch')
+Check 'Overwolf с флагами, перевод на месте -> ничего' (Is (Decide @{ FlagState = 'ok'; Patched = $true }) '')
+Check 'Overwolf закрыт -> вернуть файлы' (Is (Decide @{ FlagState = 'none'; Patched = $true }) 'Restore')
+Check 'Overwolf закрыт, нажат ярлык -> запустить с флагами' (
+    Is (Decide @{ FlagState = 'none'; LaunchRequested = $true }) 'StartOverwolf,Patch,LaunchApp')
+Check 'Overwolf давно работает без флагов -> только вернуть файлы, не мешать игре' (
+    Is (Decide @{ FlagState = 'missing'; Patched = $true; OverwolfAgeSeconds = 3600 }) 'Restore')
+Check 'Overwolf только что запущен без флагов (автозапуск) -> перезапустить' (
+    Is (Decide @{ FlagState = 'missing'; OverwolfAgeSeconds = 20 }) 'RestartOverwolf,Patch')
+Check 'перезапусков уже два -> больше не перезапускать' (
+    Is (Decide @{ FlagState = 'missing'; OverwolfAgeSeconds = 20; RestartAttempts = 2 }) '')
+Check 'AlecaFrame открыт в Overwolf без флагов -> перезапустить' (
+    Is (Decide @{ FlagState = 'missing'; OverwolfAgeSeconds = 3600; AppRunning = $true }) 'RestartOverwolf,Patch')
+Check 'ярлык срабатывает и после лимита перезапусков' (
+    Is (Decide @{ FlagState = 'missing'; LaunchRequested = $true; RestartAttempts = 9 }) 'RestartOverwolf,Patch,LaunchApp')
+Check 'Overwolf от администратора -> только вернуть файлы' (
+    Is (Decide @{ FlagState = 'unknown'; Patched = $true; LaunchRequested = $true }) 'Restore,LaunchApp')
+Check 'перевод заблокирован -> файлы исходные, Overwolf не трогаем' (
+    Is (Decide @{ FlagState = 'ok'; Patched = $true; Blocked = $true; LaunchRequested = $true }) 'Restore,LaunchApp')
+Check 'неизвестное состояние флагов отклоняется' (Throws { Decide @{ FlagState = 'maybe' } })
+
+$now = Get-Date
+$procs = @([pscustomobject]@{ StartTime = $now.AddSeconds(-30) }, [pscustomobject]@{ StartTime = $now.AddSeconds(-500) })
+Check 'возраст Overwolf считается по самому старому процессу' ([math]::Round((Get-AfruOverwolfAge -Processes $procs -Now $now)) -eq 500)
+Check 'без времени запуска возраст неизвестен (-1)' ((Get-AfruOverwolfAge -Processes @((Proc 'x'))) -eq -1)
+Check 'флаги: обычный режим и report-only' ((Get-AfruFlags $false).Count -eq 1 -and (Get-AfruFlags $true)[1] -eq $report)
+
+# --- файл состояния агента
+$statusFile = Join-Path $state 'status'
+Write-AfruStatus -Path $statusFile -Code 'patched' -Message "Перевод подключён`tк 2.6.90"
+$status = Read-AfruStatus -Path $statusFile
+Check 'статус читается обратно (кириллица, табуляция в тексте)' ($status.Code -eq 'patched' -and
+    $status.Message -eq "Перевод подключён`tк 2.6.90" -and ($now - $status.Time).TotalMinutes -lt 5)
+Check 'нет файла статуса -> $null' ($null -eq (Read-AfruStatus -Path (Join-Path $state 'nope')))
+
+# --- пути и запуск агента без окна
+$p = Get-AfruPaths -LocalAppData $tmp
+Check 'пути считаются от LOCALAPPDATA' ($p.Extensions -eq (Join-Path $tmp "Overwolf\Extensions\$appId") -and
+    $p.Localizer.StartsWith($p.App) -and $p.Agent.EndsWith('Agent.ps1'))
+$conhost = Join-Path $tmp 'conhost.exe'; Set-Content -LiteralPath $conhost -Value ''
+$cmd = Get-AfruAgentCommand -AgentPath 'C:\A\Agent.ps1' -Launch -PowerShell 'C:\PS\powershell.exe' -Conhost $conhost -Build 22631
+Check 'Windows 10 1809+ -> conhost --headless, без окна терминала' ($cmd.Target -eq $conhost -and
+    $cmd.Arguments.StartsWith('--headless "C:\PS\powershell.exe" ') -and $cmd.Arguments.EndsWith('"C:\A\Agent.ps1" -Launch'))
+$old = Get-AfruAgentCommand -AgentPath 'C:\A\Agent.ps1' -PowerShell 'C:\PS\powershell.exe' -Conhost $conhost -Build 17134
+Check 'старая Windows -> PowerShell напрямую, без -Launch' ($old.Target -eq 'C:\PS\powershell.exe' -and -not $old.Arguments.Contains('Launch'))
+
+# --- копия программы в LOCALAPPDATA
+$source = Join-Path $tmp 'download'
+foreach ($rel in 'dist\alecaframe-ru.js', 'windows\Agent.ps1', 'windows\AlecaFrameRU.psm1', 'windows\Uninstall.ps1', 'Uninstall.cmd') {
+    $file = Join-Path $source $rel
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $file) | Out-Null
+    Set-Content -LiteralPath $file -Value "v1 $rel"
+}
+$app = Join-Path (Join-Path $tmp 'installed') 'app'
+Check 'копирование в папку программы' ((Install-AfruAppFiles -SourceRoot $source -AppRoot $app) -and
+    (Get-Content -LiteralPath (Join-Path $app 'dist\alecaframe-ru.js')) -eq 'v1 dist\alecaframe-ru.js' -and
+    (Test-Path -LiteralPath (Join-Path $app 'Uninstall.cmd')))
+Set-Content -LiteralPath (Join-Path $app 'alecaframe.ico') -Value 'icon'
+Set-Content -LiteralPath (Join-Path $app 'stale.txt') -Value 'old'
+Set-Content -LiteralPath (Join-Path $source 'dist\alecaframe-ru.js') -Value 'v2'
+$null = Install-AfruAppFiles -SourceRoot $source -AppRoot $app
+Check 'обновление подменяет файлы целиком, иконка сохраняется' ((Get-Content -LiteralPath (Join-Path $app 'dist\alecaframe-ru.js')) -eq 'v2' -and
+    -not (Test-Path -LiteralPath (Join-Path $app 'stale.txt')) -and (Test-Path -LiteralPath (Join-Path $app 'alecaframe.ico')) -and
+    -not (Test-Path -LiteralPath "$app.new") -and -not (Test-Path -LiteralPath "$app.old"))
+Check 'установка из самой папки программы ничего не делает' (-not (Install-AfruAppFiles -SourceRoot $app -AppRoot $app))
+Remove-Item -LiteralPath (Join-Path $source 'windows\Agent.ps1') -Force
+Check 'нет нужного файла -> ошибка, установленная копия цела' ((Throws { Install-AfruAppFiles -SourceRoot $source -AppRoot $app } 'Agent') -and
+    (Get-Content -LiteralPath (Join-Path $app 'dist\alecaframe-ru.js')) -eq 'v2')
+
+
 
 Remove-Item -LiteralPath $tmp -Recurse -Force
 if ($failures) { Write-Host "`n$failures проверок не прошли"; exit 1 }

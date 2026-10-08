@@ -11,20 +11,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import zlib from 'node:zlib';
 import { loadLocale, ROOT } from './lib.mjs';
+import { CATEGORY_FILES, alecaFrameData, download, parseJson } from './data.mjs';
 
 const OUT_FILE = '90-items.json';
-const CACHE = path.join(os.tmpdir(), 'alecaframe-ru-items');
-const AF_DATA_URL = 'https://cdn.alecaframe.com/warframeData/json.zip';
 const WFM_ITEMS_URL = 'https://api.warframe.market/v2/items';
-const offline = process.argv.includes('--offline');
-
-// Categories that AlecaFrame lists as items (cosmetics, glyphs, quests and star chart nodes are not shown as items).
-const CATEGORY_FILES = [
-  'Warframes', 'Primary', 'Secondary', 'Melee', 'Arch-Gun', 'Arch-Melee', 'Archwing', 'Sentinels',
-  'SentinelWeapons', 'Pets', 'Railjack', 'Mods', 'Arcanes', 'Relics', 'Resources', 'Misc', 'Gear', 'Fish',
-];
 // basic.json entries that are never shown as inventory or crafting items.
 const SKIPPED_PATHS = ['/Lotus/Upgrades/Skins/', '/Lotus/Types/Challenges/', '/Lotus/Upgrades/Focus/', '/Lotus/Types/Items/ShipDecos/'];
 const RELIC_ERAS = { Lith: 'Лит', Meso: 'Мезо', Neo: 'Нео', Axi: 'Акси', Requiem: 'Реквием', Vanguard: 'Авангард' };
@@ -32,51 +23,12 @@ const REFINEMENTS = { Intact: 'целая', Exceptional: 'исключитель
 const BLUEPRINT = 'Чертёж';
 const SET = 'Комплект';
 
-async function download(url, file, headers = {}) {
-  const target = path.join(CACHE, file);
-  if (offline && fs.existsSync(target)) return fs.readFileSync(target);
-  const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  fs.mkdirSync(CACHE, { recursive: true });
-  fs.writeFileSync(target, buf);
-  return buf;
-}
-
-/** Minimal reader for regular (non-zip64) archives: file name -> () => Buffer. */
-function readZip(buf) {
-  let eocd = buf.length - 22;
-  while (eocd >= 0 && buf.readUInt32LE(eocd) !== 0x06054b50) eocd--;
-  if (eocd < 0) throw new Error('not a zip archive');
-  const files = new Map();
-  let p = buf.readUInt32LE(eocd + 16);
-  for (let i = buf.readUInt16LE(eocd + 10); i > 0; i--) {
-    const method = buf.readUInt16LE(p + 10);
-    const size = buf.readUInt32LE(p + 20);
-    const nameLength = buf.readUInt16LE(p + 28);
-    const offset = buf.readUInt32LE(p + 42);
-    const name = buf.toString('utf8', p + 46, p + 46 + nameLength);
-    files.set(name, () => {
-      const start = offset + 30 + buf.readUInt16LE(offset + 26) + buf.readUInt16LE(offset + 28);
-      const data = buf.subarray(start, start + size);
-      return method === 0 ? data : zlib.inflateRawSync(data);
-    });
-    p += 46 + nameLength + buf.readUInt16LE(p + 30) + buf.readUInt16LE(p + 32);
-  }
-  return files;
-}
-
-const parseJson = (buf) => JSON.parse(buf.toString('utf8').replace(/^\uFEFF/, ''));
 const clean = (s) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim() : '');
 const CYRILLIC = /[А-Яа-яЁё]/;
 const usable = (ru) => !!ru && CYRILLIC.test(ru) && !/[<>|{}]|\bTEST\b/i.test(ru);
 
-const zip = readZip(await download(AF_DATA_URL, 'json.zip'));
-const zipJson = (name) => {
-  const entry = zip.get(name);
-  if (!entry) throw new Error(`${name} not found in ${AF_DATA_URL}`);
-  return parseJson(entry());
-};
+const afData = await alecaFrameData();
+const zipJson = afData.json;
 const lang = zipJson('json/lang.json');
 const basic = zipJson('custom/basic.json').items;
 const wfmItems = parseJson(await download(WFM_ITEMS_URL, 'wfm-items-ru.json', { Language: 'ru', Platform: 'pc' })).data;
@@ -92,7 +44,7 @@ const itemsByUnique = new Map(); // uniqueName -> WFCD item
 const partOf = new Map(); // part uniqueName -> { parent, short }
 const partNames = new Map(); // English part name -> Map(Russian -> count)
 for (const file of CATEGORY_FILES) {
-  if (!zip.has(`json/${file}.json`)) continue;
+  if (!afData.has(`json/${file}.json`)) continue;
   for (const item of zipJson(`json/${file}.json`)) {
     if (!item?.uniqueName) continue;
     itemsByUnique.set(item.uniqueName, item);
@@ -113,6 +65,15 @@ for (const file of CATEGORY_FILES) {
 }
 const mostCommon = (counts) => [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
 const partName = (en) => (en === 'Blueprint' ? BLUEPRINT : partNames.has(en) ? mostCommon(partNames.get(en)) : null);
+
+// Crafting trees call a built part after its item ("Ash Neuroptics"), a name no data file lists.
+const builtParts = new Map(); // "Ash Neuroptics" -> { parent, short }
+for (const part of partOf.values()) {
+  const parentEn = clean(itemsByUnique.get(part.parent)?.name);
+  // Parts that repeat their item's name ("Greater Madurai Lens" of "Eidolon Madurai Lens") are named in full already.
+  const repeats = parentEn.split(' ').some((word) => word.length > 3 && part.short.includes(word));
+  if (part.short !== 'Blueprint' && parentEn && !repeats) builtParts.set(`${parentEn} ${part.short}`, part);
+}
 
 // English display name -> uniqueNames (several entries can share a name).
 const uniquesByName = new Map();
@@ -251,12 +212,20 @@ function resolveUncached(en) {
     const ru = resolveByUnique(uniqueName, en);
     if (ru) return ru;
   }
+  const built = builtParts.get(en);
+  if (built) {
+    const parentRu = official(built.parent) ?? resolve(clean(itemsByUnique.get(built.parent)?.name));
+    const shortRu = partName(built.short);
+    if (parentRu && shortRu) return `${parentRu}: ${shortRu}`;
+  }
   if (en.endsWith(' Set')) {
     const base = resolve(en.slice(0, -' Set'.length));
     if (base) return `${base}: ${SET}`;
   }
   if (en.endsWith(' Blueprint')) {
-    const base = resolve(en.slice(0, -' Blueprint'.length));
+    // A bare part ("Systems Blueprint" in a crafting tree) is the generic part, not an item of that name.
+    const baseEn = en.slice(0, -' Blueprint'.length);
+    const base = partName(baseEn) ?? resolve(baseEn);
     if (base) return `${base} (${BLUEPRINT})`;
   }
   const wfm = wfmByName.get(en);
@@ -287,7 +256,8 @@ for (const [uniqueName, v] of Object.entries(basic)) {
   names.add(en);
 }
 for (const item of itemsByUnique.values()) names.add(clean(item.name));
-for (const en of partNames.keys()) names.add(en);
+for (const en of partNames.keys()) names.add(en).add(`${en} Blueprint`);
+for (const en of builtParts.keys()) names.add(en);
 
 // Interface strings win: the same English text may already have a translation for its UI meaning.
 const uiDir = fs.mkdtempSync(path.join(os.tmpdir(), 'afru-ui-'));
