@@ -82,6 +82,19 @@ test('theme: applied from settings, optional on overlays, never by default', () 
   const unknown = open('main.html', '', { storage: { 'afru.theme': 'neon' } });
   assert.equal(unknown.doc.documentElement.hasAttribute('data-afru-theme'), false);
   unknown.win.close();
+  });
+
+test('theme: also applied when the script runs before <html> exists', () => {
+  const { window: win } = new JSDOM('', { url: 'http://localhost/web/main.html', runScripts: 'outside-only' });
+  const doc = win.document;
+  win.localStorage.setItem('afru.theme', 'graphite');
+  doc.removeChild(doc.documentElement);
+  win.eval(BUNDLE);
+  doc.appendChild(doc.createElement('html')).appendChild(doc.createElement('head'));
+  doc.dispatchEvent(new win.Event('DOMContentLoaded'));
+  assert.equal(doc.documentElement.getAttribute('data-afru-theme'), 'graphite');
+  assert.ok(doc.getElementById('afru-extras-style'), 'styles are injected');
+  win.close();
 });
 
 const INVENTORY = `

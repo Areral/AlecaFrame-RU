@@ -11,6 +11,7 @@
     "build": "node tools/build.mjs",
     "test": "node --test test/*.test.mjs",
     "preview": "node tools/preview.mjs",
+    "preview:features": "node tools/preview-features.mjs",
     "test:windows": "pwsh -NoProfile -File test/windows.tests.ps1"
   },
   "devDependencies": {

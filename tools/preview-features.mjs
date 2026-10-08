@@ -131,6 +131,7 @@ async function mainWindow(theme) {
   await shot(page, `${theme}-foundry`);
 
   report.push(`## main.html, theme=${theme} (page errors: ${errors.length})`, `  chip: ${chip}`, ...prices.map((p) => `  ${p}`));
+  report.push(...errors.map((e) => `  page error: ${e.split('\n')[0]}`));
   await ctx.close();
 }
 
@@ -149,6 +150,7 @@ async function relicOverlay(name, { russian = true, theme = 'default', live = tr
   const overflows = await page.evaluate(collectOverflows);
   report.push(`## relic-${name}: highlighted=${JSON.stringify(state.best)} platinum=${JSON.stringify(state.prices)} page errors=${errors.length}`);
   if (state.error) report.push(`  error box: ${state.error}`);
+  report.push(...errors.map((e) => `  page error: ${e.split('\n')[0]}`));
   for (const o of overflows) report.push(`  overflow +${o.over}px  ${o.text}  ::  ${o.path}`);
   await ctx.close();
   return overflows;

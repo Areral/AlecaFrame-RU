@@ -396,15 +396,15 @@
         el('label', { 'class': 'settingsCheckBoxHolder', 'for': 'afruTheme' }, ['Тема:', themeSelect]),
         checkboxRow('afruThemeOverlays', 'Применять тему к оверлеям в игре', 'indent'),
         el('div', { 'class': 'settingsCheckBoxHolder indent small' }, [
-          'Тема AlecaFrame-RU — это наши собственные цвета. Пока она включена, она перекрывает выбранную тему AlecaFrame.',
+          'Пока тема AlecaFrame-RU включена, она заменяет выбранную тему AlecaFrame.',
         ]),
       ]),
       el('div', { 'class': 'settingsGroup' }, [
         el('span', { 'class': 'settingsTitle' }, ['Цены warframe.market']),
         checkboxRow('afruRelicLive', 'Уточнять цены наград в окне реликвии по текущим заказам'),
         el('div', { 'class': 'settingsCheckBoxHolder indent small' }, [
-          'Во вкладке «Инвентарь» есть кнопка «Обновить цены»: она запрашивает заказы игроков онлайн для показанных предметов ' +
-          'через встроенный в AlecaFrame клиент warframe.market. Обновлённые цены хранятся 1 час.',
+          'Кнопка «Обновить цены» во вкладке «Инвентарь» берёт заказы игроков онлайн через встроенный в AlecaFrame ' +
+          'клиент warframe.market. Обновлённые цены хранятся 1 час.',
         ]),
         el('div', { 'class': 'settingsCheckBoxHolder' }, [clearButton, clearStatus]),
       ]),
@@ -514,8 +514,9 @@
     }, config.setupPollMs);
   }
 
-  if (!injectStyle()) doc.addEventListener('DOMContentLoaded', injectStyle);
-  applyTheme();
+  // The installer puts the script right after <head>; when run even earlier there is no <html> yet.
+  if (injectStyle() && doc.documentElement) applyTheme();
+  else doc.addEventListener('DOMContentLoaded', function () { injectStyle(); applyTheme(); });
   root.addEventListener('storage', function (e) {
     if (e.key === PRICE_CACHE_KEY) { priceCache = readPriceCache(); return; }
     if (e.key == null || e.key.indexOf(PREFIX) === 0) { applyTheme(); syncSettingsUi(); }
